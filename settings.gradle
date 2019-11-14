@@ -1,1 +1,1 @@
-include ':app', ':event_annotation', ':event_annotation_complier', ':event_annotation_api', ':rxbus'
+include ':app', ':event_annotation', ':event_annotation_complier', ':event_annotation_api', ':rxbus', ':bind_lib'

@@ -45,6 +45,11 @@ public class EventReceiver implements ICommonReceiver, LifecycleObserver {
         isRegistered = false;
     }
 
+    /**
+     * 绑定生命周期
+     * @param lifecycleOwner
+     * @return
+     */
     public static ICommonReceiver bindLifecycle(LifecycleOwner lifecycleOwner) {
         EventReceiver eventReceiver = getReceiverFromProcessor(lifecycleOwner);
         if (eventReceiver != null) {

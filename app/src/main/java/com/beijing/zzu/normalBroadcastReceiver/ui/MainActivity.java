@@ -20,6 +20,7 @@ public class MainActivity extends AppCompatActivity {
     public static final String LOGIN_NAME = "username";
     public static final String LOGIN_PASS = "password";
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);

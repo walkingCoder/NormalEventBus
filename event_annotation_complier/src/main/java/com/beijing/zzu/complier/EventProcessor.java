@@ -67,6 +67,11 @@ public class EventProcessor extends AbstractProcessor {
     private Set<TypeElement> erasedTargetNames = new LinkedHashSet<>();
     private Map<String, TypeElement> typeElementMap;
 
+    /**
+     * 每个Annotation Processor必须有一个空的构造函数。
+     * 编译期间，init()会自动被注解处理工具调用，并传入ProcessingEnvironment参数，
+     * 通过该参数可以获取到很多有用的工具类（Element，Filer，Messager等）
+     */
     @Override
     public synchronized void init(ProcessingEnvironment processingEnvironment) {
         super.init(processingEnvironment);
@@ -77,15 +82,22 @@ public class EventProcessor extends AbstractProcessor {
         receiverMap = new HashMap<>(16);
         typeElementMap = new HashMap<>(16);
     }
-
+    /**
+     * Annotation Processor扫描出的结果会存储进roundEnvironment中，可以在这里获取到注解内容，编写你的操作逻辑。
+     * 注意:process()函数中不能直接进行异常抛出,否则程序会异常崩溃
+     */
     @Override
     public boolean process(Set<? extends TypeElement> set, RoundEnvironment roundEnvironment) {
-        //生成下厨房广播
+        //生成广播
         genEventReceiver(roundEnvironment);
         return true;
 
     }
 
+    /**
+     * 用于指定自定义注解处理器(Annotation Processor)是注册给哪些注解的(Annotation),
+     * 注解(Annotation)指定必须是完整的包名+类名
+     */
     @Override
     public Set<String> getSupportedAnnotationTypes() {
         Set<String> supportedAnnotationTypes = new LinkedHashSet<>();
@@ -93,26 +105,36 @@ public class EventProcessor extends AbstractProcessor {
         return supportedAnnotationTypes;
     }
 
+    /**
+     * 用于指定你的java版本，一般返回：SourceVersion.latestSupported()
+     */
     @Override
     public SourceVersion getSupportedSourceVersion() {
         return SourceVersion.latestSupported();
     }
 
+    /**
+     * 生成广播
+     * @param env
+     */
     private void genEventReceiver(RoundEnvironment env) {
         if (env == null) {
             return;
         }
         erasedTargetNames.clear();
         typeElementMap.clear();
+        //遍历所有注解为EventBroadcastReceiver的Element
         for (Element element : env.getElementsAnnotatedWith(EventBroadcastReceiver.class)) {
             if (element.getKind() != ElementKind.METHOD) {
                 return;
             }
             String packageName = elementUtils.getPackageOf(element).getQualifiedName().toString();
             messager.printMessage(Diagnostic.Kind.WARNING, "packageName:" + packageName);
+            //TypeElement 类或接口
             TypeElement typeElement = (TypeElement) element.getEnclosingElement();
             //得到类名字
             String className = typeElement.getSimpleName().toString();
+            //ExecutableElement 方法
             ExecutableElement executableElement = (ExecutableElement) element;
             //对修饰符进行判断
             Set<Modifier> modifierSet = executableElement.getModifiers();
@@ -183,7 +205,9 @@ public class EventProcessor extends AbstractProcessor {
             ClassName receiverClassName = ClassName.get(PKG_RECEIVER, "CommonBroadcastReceiver");
 
             //构造类对象
+            //weakBuilder =  private SoftReference<MainActivity> softReference;
             FieldSpec.Builder weakBuilder = FieldSpec.builder(ParameterizedTypeName.get(ClassName.get(SoftReference.class), typeName), "softReference", Modifier.PRIVATE);
+            //public class MainActivity_Receiver
             TypeSpec.Builder typeSpec = TypeSpec.classBuilder(className + RECEIVER_SUFFIX)
                     .addModifiers(Modifier.PUBLIC)
                     .addField(weakBuilder.build());
@@ -195,15 +219,21 @@ public class EventProcessor extends AbstractProcessor {
                     hasParent = true;
                     String pClassName = parentType.getSimpleName().toString();
                     String pPackageName = elementUtils.getPackageOf(parentType).getQualifiedName().toString();
+                    // extends
                     typeSpec.superclass(ClassName.get(pPackageName, pClassName + RECEIVER_SUFFIX));
                 }
             }
 
+            // implements
             if (!hasParent) {
                 typeSpec.addSuperinterface(ClassName.get(PKG_RECEIVER, "OnReceiveListener"));
                 typeSpec.addSuperinterface(ClassName.get(PKG_RECEIVER, "IReceiverLifecycleController"));
             }
 
+            /**
+             *  @Override
+             *  public void onReceive(Context context, Intent intent)
+             */
             MethodSpec.Builder listenerMethod = MethodSpec.methodBuilder("onReceive")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
@@ -216,9 +246,19 @@ public class EventProcessor extends AbstractProcessor {
             }
 
             //判断Intent为null的话直接返回
+            /**
+             * if(intent == null) {
+             *       return;
+             *     }
+             */
             listenerMethod.beginControlFlow("if(intent == null)");
             listenerMethod.addStatement("return");
             listenerMethod.endControlFlow();
+            /**
+             * if(softReference == null || softReference.get() == null) {
+             *       return;
+             *     }
+             */
             listenerMethod.beginControlFlow("if($L == null || $L.get() == null)", "softReference", "softReference");
             listenerMethod.addStatement("return");
             listenerMethod.endControlFlow();
@@ -255,6 +295,10 @@ public class EventProcessor extends AbstractProcessor {
                 listenerMethod.endControlFlow();
             }
 
+            /**
+             * public EventReceiver buildReceiver(MainActivity object) {
+             *     softReference = new SoftReference<>(object);
+             */
             MethodSpec.Builder methodSpec = MethodSpec.methodBuilder("buildReceiver")
                     .addModifiers(Modifier.PUBLIC)
                     .returns(returnClassName)
@@ -285,6 +329,7 @@ public class EventProcessor extends AbstractProcessor {
                 methodSpec.addStatement("$T $L = super.$L($L)", returnClassName, "eventReceiver", "buildReceiver", "object");
                 methodSpec.addStatement("$T $L = $L.getIntentFilter()", intentFilterClassName, "intentFilter", "eventReceiver");
             } else {
+                //IntentFilter intentFilter = new IntentFilter();
                 methodSpec.addStatement("$T intentFilter = new IntentFilter()", intentFilterClassName);
             }
 
@@ -292,15 +337,26 @@ public class EventProcessor extends AbstractProcessor {
                 if (action == null || action.isEmpty()) {
                     continue;
                 }
+//                intentFilter.addAction("logout");
                 methodSpec.addStatement("intentFilter.addAction($S)", action);
             }
             if (hasParent) {
                 methodSpec.addStatement("return $L", "eventReceiver");
             } else {
+                /**
+                 *  CommonBroadcastReceiver commonBroadcastReceiver = CommonBroadcastReceiver.getBroadcastReceiver(this);
+                 *     return new EventReceiver(commonBroadcastReceiver, intentFilter, this);
+                 */
                 methodSpec.addStatement("$T commonBroadcastReceiver = CommonBroadcastReceiver.getBroadcastReceiver(this)", receiverClassName);
                 methodSpec.addStatement("return new EventReceiver($L, $L, $L)", "commonBroadcastReceiver", "intentFilter", "this");
             }
 
+            /**
+             * @Override
+             *   public void changeLifecycleState(boolean isActive) {
+             *     this.isActive = isActive;
+             *   }
+             */
             FieldSpec.Builder isActiveFiled = FieldSpec.builder(boolean.class, "isActive", Modifier.PRIVATE)
                     .initializer("false");
             MethodSpec.Builder lifecycleBuilder = MethodSpec.methodBuilder("changeLifecycleState")
@@ -313,11 +369,13 @@ public class EventProcessor extends AbstractProcessor {
                 lifecycleBuilder.addStatement("super.$L($L)", "changeLifecycleState", "isActive");
             }
 
+            //添加 变量 方法
             typeSpec.addField(isActiveFiled.build())
                     .addMethod(methodSpec.build())
                     .addMethod(listenerMethod.build())
                     .addMethod(lifecycleBuilder.build());
 
+            //生成文件
             JavaFile javaFile = JavaFile.builder(packageName, typeSpec.build())
                     .build();
 
@@ -346,6 +404,9 @@ public class EventProcessor extends AbstractProcessor {
             }
             listenerMethod.endControlFlow();
         } else {
+            /**
+             * softReference.get().onReceive(intent);
+             */
             if (paramsCount == 0) {
                 listenerMethod.addStatement("$L.get().$L()", "softReference", methodName);
             } else if (paramsCount == 1) {
